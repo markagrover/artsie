@@ -70,7 +70,7 @@ async function request<T>(
     if (err instanceof DOMException && err.name === "AbortError") {
       throw new Error(
         path.includes("/images")
-          ? "Image upload timed out — try a smaller JPEG/PNG (under 800KB)"
+          ? "Image upload timed out — try a smaller JPEG/PNG/WebP (under 500KB)"
           : "Request timed out — try again",
       );
     }

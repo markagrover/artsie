@@ -73,3 +73,11 @@ model ListingImage {
 
   @@index([listingId])
 }
+
+/// Durable rate-limit counters (survive serverless cold starts).
+model RateLimitBucket {
+  id        String   @id
+  count     Int      @default(0)
+  resetAt   DateTime
+  updatedAt DateTime @updatedAt
+}

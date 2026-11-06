@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -10,16 +10,25 @@ const isPublished = databaseUrl !== "";
 
 function resolveJwtSecret(): string {
   const fromEnv = process.env.JWT_SECRET?.trim();
-  if (fromEnv) return fromEnv;
-  // Published / multi-instance: derive a stable secret from DATABASE_URL so
-  // every serverless isolate verifies the same tokens. Prefer JWT_SECRET when set.
-  // Never log the derived value.
+  if (fromEnv) {
+    if (fromEnv.length < 32) {
+      throw new Error(
+        "JWT_SECRET must be at least 32 characters. Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
+      );
+    }
+    return fromEnv;
+  }
+  // Never derive the signing key from DATABASE_URL (or any shared credential).
+  // Published / DB-backed hosts must set JWT_SECRET explicitly.
   if (databaseUrl !== "") {
-    return createHash("sha256")
-      .update(`artsie-jwt-v1:${databaseUrl}`)
-      .digest("hex");
+    throw new Error(
+      "JWT_SECRET is required when DATABASE_URL is set. Bind JWT_SECRET as an app secret (or set it in .env for local use).",
+    );
   }
   // Local without DB URL: ephemeral is fine (single process).
+  console.warn(
+    "JWT_SECRET is unset; using an ephemeral secret for this process only.",
+  );
   return randomBytes(32).toString("hex");
 }
 

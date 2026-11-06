@@ -3,15 +3,17 @@ import { z } from "zod";
 import { prisma } from "../db/prisma.js";
 import { hashPassword, signToken, verifyPassword } from "../lib/auth.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
-import { rateLimit } from "../lib/rateLimit.js";
+import { durableRateLimit, rateLimit } from "../lib/rateLimit.js";
 import { requireAuth, type AuthedRequest } from "../middleware/auth.js";
 
 export const authRouter = Router();
 
-const registerLimit = rateLimit({
+/** Signup is the main storage-growth gate — persist across cold starts. */
+const registerLimit = durableRateLimit({
   windowMs: 60 * 60 * 1000,
-  max: 5,
+  max: 3,
   name: "registration",
+  scope: "registration",
 });
 const loginLimit = rateLimit({
   windowMs: 15 * 60 * 1000,

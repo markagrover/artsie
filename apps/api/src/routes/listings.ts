@@ -4,6 +4,7 @@ import path from "node:path";
 import { z } from "zod";
 import { ArtworkKind, ListingStatus, Prisma } from "@prisma/client";
 import { prisma } from "../db/prisma.js";
+import { signMediaToken } from "../lib/auth.js";
 import { deleteStoredImage, storeImage } from "../lib/storage.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
 import { rateLimit } from "../lib/rateLimit.js";
@@ -19,11 +20,14 @@ const MAX_PRICE_CENTS = 1_000_000_000;
 const MAX_SHIPPING_CENTS = 10_000_000;
 
 /** Resource caps to prevent disk/memory exhaustion on the published host. */
-const MAX_LISTINGS_PER_USER = 25;
-const MAX_IMAGES_PER_LISTING = 4;
-const MAX_IMAGES_PER_USER = 40;
+const MAX_LISTINGS_PER_USER = 15;
+const MAX_IMAGES_PER_LISTING = 3;
+const MAX_IMAGES_PER_USER = 20;
 /** Keep uploads small so serverless write + response stay under host limits. */
-const MAX_UPLOAD_BYTES = 800 * 1024;
+const MAX_UPLOAD_BYTES = 500 * 1024;
+/** Public catalog page size — never load the full table. */
+const CATALOG_PAGE_SIZE = 24;
+const CATALOG_MAX_PAGE_SIZE = 48;
 
 /** Memory storage so nothing hits disk until ownership + quota checks pass. */
 const upload = multer({
@@ -31,11 +35,12 @@ const upload = multer({
   limits: { fileSize: MAX_UPLOAD_BYTES, files: MAX_IMAGES_PER_LISTING },
   fileFilter: (_req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-    if ([".jpg", ".jpeg", ".png", ".webp", ".gif"].includes(ext)) {
+    // Extension is a coarse gate only; storeImage verifies magic bytes.
+    if ([".jpg", ".jpeg", ".png", ".webp"].includes(ext)) {
       cb(null, true);
       return;
     }
-    cb(new Error("Only JPEG, PNG, WebP, or GIF images are allowed"));
+    cb(new Error("Only JPEG, PNG, or WebP images are allowed"));
   },
 });
 
@@ -96,7 +101,7 @@ type ListingWithRelations = {
   updatedAt: Date;
   images: Array<{
     id: string;
-    url: string;
+    url?: string;
     sortOrder: number;
   }>;
   seller: {
@@ -106,13 +111,30 @@ type ListingWithRelations = {
   };
 };
 
-/** Never put data: URLs in JSON — they hang the publish host on upload/list. */
-function publicImageUrl(img: { id: string; url: string }): string {
-  if (img.url.startsWith("data:")) return `/api/media/${img.id}`;
-  return img.url;
+/**
+ * Never put data: URLs in JSON — they hang the publish host on upload/list.
+ * Draft images get a short-lived signed query so owner `<img>` tags work
+ * without a Bearer header; published images stay publicly readable by id.
+ */
+function publicImageUrl(
+  img: { id: string; url?: string },
+  opts: { signDraft: boolean; status: ListingStatus },
+): string {
+  if (img.url && !img.url.startsWith("data:") && !img.url.startsWith("/uploads/")) {
+    return img.url;
+  }
+  const base = `/api/media/${img.id}`;
+  if (opts.signDraft && opts.status !== ListingStatus.PUBLISHED) {
+    return `${base}?t=${encodeURIComponent(signMediaToken(img.id))}`;
+  }
+  return base;
 }
 
-function serializeListing(listing: ListingWithRelations) {
+function serializeListing(
+  listing: ListingWithRelations,
+  opts: { signDraft?: boolean } = {},
+) {
+  const signDraft = opts.signDraft === true;
   return {
     id: listing.id,
     title: listing.title,
@@ -133,7 +155,7 @@ function serializeListing(listing: ListingWithRelations) {
       .sort((a, b) => a.sortOrder - b.sortOrder)
       .map((img) => ({
         id: img.id,
-        url: publicImageUrl(img),
+        url: publicImageUrl(img, { signDraft, status: listing.status }),
         sortOrder: img.sortOrder,
       })),
     seller: {
@@ -144,18 +166,45 @@ function serializeListing(listing: ListingWithRelations) {
   };
 }
 
-const include = {
+/** List responses never select the inline url column (can be hundreds of KB). */
+const includeList = {
+  images: {
+    select: { id: true, sortOrder: true },
+    orderBy: { sortOrder: "asc" as const },
+  },
+  seller: {
+    select: { id: true, displayName: true, bio: true },
+  },
+} as const;
+
+/** Mutating paths that need the stored url for cleanup still include it. */
+const includeWithUrl = {
   images: true,
   seller: {
     select: { id: true, displayName: true, bio: true },
   },
 } as const;
 
-/** Public catalog: published originals. */
+const catalogLimit = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  name: "catalog",
+});
+
+/** Public catalog: published originals (paginated; no image blobs loaded). */
 listingsRouter.get(
   "/",
+  catalogLimit,
   asyncHandler(async (req, res) => {
     const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    const rawLimit = Number(req.query.limit ?? CATALOG_PAGE_SIZE);
+    const limit = Number.isFinite(rawLimit)
+      ? Math.min(Math.max(1, Math.floor(rawLimit)), CATALOG_MAX_PAGE_SIZE)
+      : CATALOG_PAGE_SIZE;
+    const rawOffset = Number(req.query.offset ?? 0);
+    const offset = Number.isFinite(rawOffset)
+      ? Math.max(0, Math.floor(rawOffset))
+      : 0;
     const where: Prisma.ListingWhereInput = {
       status: ListingStatus.PUBLISHED,
       ...(q
@@ -168,12 +217,22 @@ listingsRouter.get(
           }
         : {}),
     };
-    const listings = await prisma.listing.findMany({
-      where,
-      include,
-      orderBy: { createdAt: "desc" },
+    const [listings, total] = await Promise.all([
+      prisma.listing.findMany({
+        where,
+        include: includeList,
+        orderBy: { createdAt: "desc" },
+        take: limit,
+        skip: offset,
+      }),
+      prisma.listing.count({ where }),
+    ]);
+    res.json({
+      listings: listings.map((l) => serializeListing(l)),
+      total,
+      limit,
+      offset,
     });
-    res.json({ listings: listings.map(serializeListing) });
   }),
 );
 
@@ -184,10 +243,13 @@ listingsRouter.get(
   asyncHandler(async (req: AuthedRequest, res) => {
     const listings = await prisma.listing.findMany({
       where: { sellerId: req.user!.id },
-      include,
+      include: includeList,
       orderBy: { updatedAt: "desc" },
+      take: MAX_LISTINGS_PER_USER,
     });
-    res.json({ listings: listings.map(serializeListing) });
+    res.json({
+      listings: listings.map((l) => serializeListing(l, { signDraft: true })),
+    });
   }),
 );
 
@@ -196,15 +258,15 @@ listingsRouter.get(
   asyncHandler(async (req, res) => {
     const listing = await prisma.listing.findUnique({
       where: { id: req.params.id },
-      include,
+      include: includeList,
     });
     if (!listing) {
       res.status(404).json({ error: "Listing not found" });
       return;
     }
+    let owner = false;
     if (listing.status === ListingStatus.DRAFT) {
       const header = req.headers.authorization;
-      let owner = false;
       if (header?.startsWith("Bearer ")) {
         try {
           const { verifyToken } = await import("../lib/auth.js");
@@ -219,7 +281,9 @@ listingsRouter.get(
         return;
       }
     }
-    res.json({ listing: serializeListing(listing) });
+    res.json({
+      listing: serializeListing(listing, { signDraft: owner }),
+    });
   }),
 );
 
@@ -273,9 +337,11 @@ listingsRouter.post(
         quantity: 1,
         kind: ArtworkKind.ORIGINAL,
       },
-      include,
+      include: includeList,
     });
-    res.status(201).json({ listing: serializeListing(listing) });
+    res.status(201).json({
+      listing: serializeListing(listing, { signDraft: true }),
+    });
   }),
 );
 
@@ -308,9 +374,11 @@ listingsRouter.patch(
         kind: ArtworkKind.ORIGINAL,
         quantity: 1,
       },
-      include,
+      include: includeList,
     });
-    res.json({ listing: serializeListing(listing) });
+    res.json({
+      listing: serializeListing(listing, { signDraft: true }),
+    });
   }),
 );
 
@@ -320,7 +388,7 @@ listingsRouter.delete(
   asyncHandler(async (req: AuthedRequest, res) => {
     const existing = await prisma.listing.findUnique({
       where: { id: req.params.id },
-      include: { images: true },
+      include: includeWithUrl,
     });
     if (!existing || existing.sellerId !== req.user!.id) {
       res.status(404).json({ error: "Listing not found" });
@@ -340,7 +408,7 @@ listingsRouter.post(
   asyncHandler(async (req: AuthedRequest, res, next) => {
     const existing = await prisma.listing.findUnique({
       where: { id: req.params.id },
-      include: { images: true },
+      include: { images: { select: { id: true } } },
     });
     if (!existing || existing.sellerId !== req.user!.id) {
       res.status(404).json({ error: "Listing not found" });
@@ -409,9 +477,17 @@ listingsRouter.post(
       return;
     }
     let order = gate.existingImageCount;
-    const created = [];
+    const created: Array<{ id: string }> = [];
     for (const file of files) {
-      const { url } = await storeImage(file);
+      let url: string;
+      try {
+        ({ url } = await storeImage(file));
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Invalid image upload";
+        res.status(400).json({ error: message });
+        return;
+      }
       const img = await prisma.listingImage.create({
         data: {
           listingId: gate.listingId,
@@ -423,16 +499,15 @@ listingsRouter.post(
     }
     const listing = await prisma.listing.findUniqueOrThrow({
       where: { id: gate.listingId },
-      include,
+      include: includeList,
     });
     // Never return raw data: URLs in JSON — only short /api/media/:id links.
+    const signedListing = serializeListing(listing, { signDraft: true });
     res.status(201).json({
-      images: created.map((img) => ({
-        id: img.id,
-        url: publicImageUrl(img),
-        sortOrder: img.sortOrder,
-      })),
-      listing: serializeListing(listing),
+      images: signedListing.images.filter((img) =>
+        created.some((c) => c.id === img.id),
+      ),
+      listing: signedListing,
     });
   }),
 );

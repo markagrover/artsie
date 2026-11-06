@@ -25,3 +25,24 @@ export function signToken(payload: AuthTokenPayload): string {
 export function verifyToken(token: string): AuthTokenPayload {
   return jwt.verify(token, env.jwtSecret) as AuthTokenPayload;
 }
+
+/** Short-lived token so `<img src>` can load draft media without a Bearer header. */
+export function signMediaToken(imageId: string): string {
+  return jwt.sign(
+    { mid: imageId, purpose: "media" },
+    env.jwtSecret,
+    { expiresIn: "2h" },
+  );
+}
+
+export function verifyMediaToken(token: string, imageId: string): boolean {
+  try {
+    const payload = jwt.verify(token, env.jwtSecret) as {
+      mid?: string;
+      purpose?: string;
+    };
+    return payload.purpose === "media" && payload.mid === imageId;
+  } catch {
+    return false;
+  }
+}
