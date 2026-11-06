@@ -12,7 +12,7 @@ const env = {
   ...process.env,
   DATABASE_URL:
     process.env.DATABASE_URL?.trim() ||
-    "postgresql://artsie:artsie@127.0.0.1:5432/artsie",
+    "postgresql://127.0.0.1:5432/prisma_generate_placeholder",
 };
 
 const result = spawnSync("npx", ["prisma", "generate"], {

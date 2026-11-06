@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,15 +11,16 @@ const isPublished = databaseUrl !== "";
 function resolveJwtSecret(): string {
   const fromEnv = process.env.JWT_SECRET?.trim();
   if (fromEnv) return fromEnv;
-  // Local/dev only — never ship a fixed production secret in source.
-  if (!isPublished) return "dev-secret-change-me";
-  // Published host without JWT_SECRET yet: ephemeral per process.
-  // Bind JWT_SECRET via Cursor app secrets for stable sessions across restarts.
-  const generated = randomBytes(32).toString("hex");
-  console.warn(
-    "[env] JWT_SECRET unset on published host; using ephemeral secret for this process",
-  );
-  return generated;
+  // Published / multi-instance: derive a stable secret from DATABASE_URL so
+  // every serverless isolate verifies the same tokens. Prefer JWT_SECRET when set.
+  // Never log the derived value.
+  if (databaseUrl !== "") {
+    return createHash("sha256")
+      .update(`artsie-jwt-v1:${databaseUrl}`)
+      .digest("hex");
+  }
+  // Local without DB URL: ephemeral is fine (single process).
+  return randomBytes(32).toString("hex");
 }
 
 export const env = {
@@ -29,15 +30,21 @@ export const env = {
   jwtSecret: resolveJwtSecret(),
   /** Comma-separated origins, or "*" / empty for same-origin / reflect. */
   corsOrigin: process.env.CORS_ORIGIN ?? (isPublished ? "" : "http://localhost:5173"),
-  storageDriver: (process.env.STORAGE_DRIVER ?? "local") as "local" | "s3",
+  // Default inline (data URL in Postgres) so publish hosts keep images.
+  // Set STORAGE_DRIVER=local for classic disk files in local dev.
+  storageDriver: (process.env.STORAGE_DRIVER ?? "inline") as
+    | "local"
+    | "inline"
+    | "s3",
   uploadDir: path.resolve(
     process.env.UPLOAD_DIR ?? path.join(__dirname, "../../uploads"),
   ),
-  /** Built Vite SPA — served by Express in production / publish. */
+  /** Built Vite SPA — repo-root `public/` (Cursor Publish outputDirectory). */
   webDistDir: path.resolve(
     process.env.WEB_DIST_DIR ??
-      path.join(__dirname, "../../../web/dist"),
+      path.join(__dirname, "../../../../public"),
   ),
+
   s3: {
     endpoint: process.env.S3_ENDPOINT,
     region: process.env.S3_REGION ?? "us-east-1",

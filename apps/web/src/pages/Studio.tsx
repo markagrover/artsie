@@ -91,9 +91,14 @@ export function Studio() {
         priceCents: dollarsToCents(form.price),
         shippingPriceCents: Math.round(Number(form.shippingPrice || 0) * 100),
         shippingNotes: form.shippingNotes || null,
-        estimatedShipDays: form.estimatedShipDays
-          ? Number(form.estimatedShipDays)
-          : null,
+        estimatedShipDays: (() => {
+          if (!form.estimatedShipDays.trim()) return null;
+          const days = Number(form.estimatedShipDays);
+          if (!Number.isInteger(days) || days <= 0) {
+            throw new Error("Ship days must be a whole number");
+          }
+          return days;
+        })(),
         status: form.status,
         kind: "ORIGINAL",
       };
@@ -102,9 +107,22 @@ export function Studio() {
         ({ listing } = await api.updateListing(token, editingId, body));
       } else {
         ({ listing } = await api.createListing(token, body));
+        // So a retry after a failed image upload updates this listing
+        // instead of creating a duplicate.
+        setEditingId(listing.id);
       }
       if (files && files.length > 0) {
-        ({ listing } = await api.uploadImages(token, listing.id, files));
+        try {
+          ({ listing } = await api.uploadImages(token, listing.id, files));
+        } catch (uploadErr) {
+          setFiles(null);
+          await load();
+          throw new Error(
+            uploadErr instanceof Error
+              ? `Listing saved, but image upload failed: ${uploadErr.message}`
+              : "Listing saved, but image upload failed",
+          );
+        }
       }
       setForm(emptyForm);
       setEditingId(null);
@@ -262,11 +280,11 @@ export function Studio() {
             </select>
           </div>
           <div className="field">
-            <label htmlFor="images">Artwork images</label>
+            <label htmlFor="images">Artwork images (up to 4, 2MB each)</label>
             <input
               id="images"
               type="file"
-              accept="image/*"
+              accept="image/jpeg,image/png,image/webp,image/gif"
               multiple
               onChange={(e) => setFiles(e.target.files)}
             />

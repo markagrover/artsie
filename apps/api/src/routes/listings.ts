@@ -1,10 +1,12 @@
 import { Router } from "express";
 import multer from "multer";
+import path from "node:path";
 import { z } from "zod";
 import { ArtworkKind, ListingStatus, Prisma } from "@prisma/client";
 import { prisma } from "../db/prisma.js";
-import { storeImage } from "../lib/storage.js";
+import { deleteStoredImage, storeImage } from "../lib/storage.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
+import { rateLimit } from "../lib/rateLimit.js";
 import { requireAuth, type AuthedRequest } from "../middleware/auth.js";
 
 export const listingsRouter = Router();
@@ -16,9 +18,43 @@ const MAX_PRICE_CENTS = 1_000_000_000;
 /** Practical shipping cap ($100k). */
 const MAX_SHIPPING_CENTS = 10_000_000;
 
+/** Resource caps to prevent disk/memory exhaustion on the published host. */
+const MAX_LISTINGS_PER_USER = 25;
+const MAX_IMAGES_PER_LISTING = 4;
+const MAX_IMAGES_PER_USER = 40;
+const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
+
+/** Memory storage so nothing hits disk until ownership + quota checks pass. */
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 8 * 1024 * 1024, files: 6 },
+  limits: { fileSize: MAX_UPLOAD_BYTES, files: MAX_IMAGES_PER_LISTING },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if ([".jpg", ".jpeg", ".png", ".webp", ".gif"].includes(ext)) {
+      cb(null, true);
+      return;
+    }
+    cb(new Error("Only JPEG, PNG, WebP, or GIF images are allowed"));
+  },
+});
+
+type UploadGate = {
+  listingId: string;
+  existingImageCount: number;
+  userImageCount: number;
+};
+
+type GatedRequest = AuthedRequest & { uploadGate?: UploadGate };
+
+const createListingLimit = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 30,
+  name: "listing create",
+});
+const uploadLimit = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 40,
+  name: "image upload",
 });
 
 const listingBodySchema = z.object({
@@ -183,6 +219,7 @@ listingsRouter.get(
 listingsRouter.post(
   "/",
   requireAuth,
+  createListingLimit,
   asyncHandler(async (req: AuthedRequest, res) => {
     const user = await prisma.user.findUniqueOrThrow({
       where: { id: req.user!.id },
@@ -190,6 +227,15 @@ listingsRouter.post(
     if (!user.isArtist) {
       res.status(403).json({
         error: "Enable artist mode on your profile before creating listings",
+      });
+      return;
+    }
+    const listingCount = await prisma.listing.count({
+      where: { sellerId: user.id },
+    });
+    if (listingCount >= MAX_LISTINGS_PER_USER) {
+      res.status(400).json({
+        error: `Maximum ${MAX_LISTINGS_PER_USER} listings per account`,
       });
       return;
     }
@@ -267,12 +313,14 @@ listingsRouter.delete(
   asyncHandler(async (req: AuthedRequest, res) => {
     const existing = await prisma.listing.findUnique({
       where: { id: req.params.id },
+      include: { images: true },
     });
     if (!existing || existing.sellerId !== req.user!.id) {
       res.status(404).json({ error: "Listing not found" });
       return;
     }
     await prisma.listing.delete({ where: { id: existing.id } });
+    await Promise.all(existing.images.map((img) => deleteStoredImage(img.url)));
     res.status(204).send();
   }),
 );
@@ -280,8 +328,9 @@ listingsRouter.delete(
 listingsRouter.post(
   "/:id/images",
   requireAuth,
-  upload.array("images", 6),
-  asyncHandler(async (req: AuthedRequest, res) => {
+  uploadLimit,
+  // Ownership + remaining quota BEFORE multipart hits disk/memory heavy parse.
+  asyncHandler(async (req: AuthedRequest, res, next) => {
     const existing = await prisma.listing.findUnique({
       where: { id: req.params.id },
       include: { images: true },
@@ -290,22 +339,75 @@ listingsRouter.post(
       res.status(404).json({ error: "Listing not found" });
       return;
     }
+    if (existing.images.length >= MAX_IMAGES_PER_LISTING) {
+      res.status(400).json({
+        error: `Maximum ${MAX_IMAGES_PER_LISTING} images per listing`,
+      });
+      return;
+    }
+    const userImageCount = await prisma.listingImage.count({
+      where: { listing: { sellerId: req.user!.id } },
+    });
+    if (userImageCount >= MAX_IMAGES_PER_USER) {
+      res.status(400).json({
+        error: `Maximum ${MAX_IMAGES_PER_USER} images per account`,
+      });
+      return;
+    }
+    (req as GatedRequest).uploadGate = {
+      listingId: existing.id,
+      existingImageCount: existing.images.length,
+      userImageCount,
+    };
+    next();
+  }),
+  (req, res, next) => {
+    upload.array("images", MAX_IMAGES_PER_LISTING)(req, res, (err) => {
+      if (err) {
+        const message =
+          err instanceof multer.MulterError
+            ? err.code === "LIMIT_FILE_SIZE"
+              ? `Each image must be at most ${MAX_UPLOAD_BYTES / (1024 * 1024)}MB`
+              : err.message
+            : err instanceof Error
+              ? err.message
+              : "Upload failed";
+        res.status(400).json({ error: message });
+        return;
+      }
+      next();
+    });
+  },
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const gate = (req as GatedRequest).uploadGate;
+    if (!gate) {
+      res.status(500).json({ error: "Upload gate missing" });
+      return;
+    }
     const files = (req.files as Express.Multer.File[] | undefined) ?? [];
     if (files.length === 0) {
       res.status(400).json({ error: "No images uploaded" });
       return;
     }
-    if (existing.images.length + files.length > 6) {
-      res.status(400).json({ error: "Maximum 6 images per listing" });
+    if (gate.existingImageCount + files.length > MAX_IMAGES_PER_LISTING) {
+      res.status(400).json({
+        error: `Maximum ${MAX_IMAGES_PER_LISTING} images per listing`,
+      });
       return;
     }
-    let order = existing.images.length;
+    if (gate.userImageCount + files.length > MAX_IMAGES_PER_USER) {
+      res.status(400).json({
+        error: `Maximum ${MAX_IMAGES_PER_USER} images per account`,
+      });
+      return;
+    }
+    let order = gate.existingImageCount;
     const created = [];
     for (const file of files) {
       const { url } = await storeImage(file);
       const img = await prisma.listingImage.create({
         data: {
-          listingId: existing.id,
+          listingId: gate.listingId,
           url,
           sortOrder: order++,
         },
@@ -313,7 +415,7 @@ listingsRouter.post(
       created.push(img);
     }
     const listing = await prisma.listing.findUniqueOrThrow({
-      where: { id: existing.id },
+      where: { id: gate.listingId },
       include,
     });
     res.status(201).json({

@@ -5,35 +5,83 @@ import { env } from "./env.js";
 
 /**
  * Storage abstraction.
- * - local: files under UPLOAD_DIR, served at /uploads/*
- * - s3: Phase 1 stub — writes locally but documents S3 env for production.
- *   Wire an AWS SDK putObject here when STORAGE_DRIVER=s3 and credentials exist.
+ * Default: store images as data URLs in Postgres (ListingImage.url) so they
+ * survive Cursor Publish / serverless hosts with ephemeral disks.
+ * Opt into local files with STORAGE_DRIVER=local.
  */
 export async function ensureUploadDir(): Promise<void> {
+  if (env.storageDriver !== "local") return;
   await fs.mkdir(env.uploadDir, { recursive: true });
 }
 
+const ALLOWED_EXT = new Set([".jpg", ".jpeg", ".png", ".webp", ".gif"]);
+
+const MIME_BY_EXT: Record<string, string> = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+  ".gif": "image/gif",
+};
+
+export function safeImageExt(originalname: string): string {
+  const ext = path.extname(originalname).toLowerCase() || ".jpg";
+  return ALLOWED_EXT.has(ext) ? ext : ".jpg";
+}
+
+function toDataUrl(buffer: Buffer, mime: string): string {
+  return `data:${mime};base64,${buffer.toString("base64")}`;
+}
+
+function mimeForFile(file: Express.Multer.File): string {
+  if (file.mimetype && file.mimetype.startsWith("image/")) return file.mimetype;
+  return MIME_BY_EXT[safeImageExt(file.originalname)] ?? "image/jpeg";
+}
+
+/** Persist an already-buffered multer file; return a URL or data URL. */
 export async function storeImage(
   file: Express.Multer.File,
 ): Promise<{ url: string }> {
-  await ensureUploadDir();
-  const ext = path.extname(file.originalname).toLowerCase() || ".jpg";
-  const safeExt = [".jpg", ".jpeg", ".png", ".webp", ".gif"].includes(ext)
-    ? ext
-    : ".jpg";
-  const filename = `${randomUUID()}${safeExt}`;
-  const dest = path.join(env.uploadDir, filename);
-  await fs.writeFile(dest, file.buffer);
-
-  if (env.storageDriver === "s3") {
-    // Stub: keep local write for MVP demos. Configure S3_* env vars and
-    // replace this branch with an S3 PutObject that returns publicBaseUrl.
-    if (env.s3.publicBaseUrl) {
-      console.warn(
-        "[storage] STORAGE_DRIVER=s3 but SDK upload not wired yet; serving local file. See README.",
-      );
-    }
+  let buffer = file.buffer;
+  if (!buffer && file.path) {
+    buffer = await fs.readFile(file.path);
+  }
+  if (!buffer) {
+    throw new Error("Upload missing file data");
   }
 
+  const mime = mimeForFile(file);
+
+  // Durable default: inline in DB (required on publish hosts).
+  if (env.storageDriver !== "local") {
+    return { url: toDataUrl(buffer, mime) };
+  }
+
+  await ensureUploadDir();
+  const filename = `${randomUUID()}${safeImageExt(file.originalname)}`;
+  const dest = path.join(env.uploadDir, filename);
+  await fs.writeFile(dest, buffer);
   return { url: `/uploads/${filename}` };
+}
+
+/** Best-effort delete of a local upload. Data URLs need no file cleanup. */
+export async function deleteStoredImage(url: string): Promise<void> {
+  if (url.startsWith("data:")) return;
+  if (!url.startsWith("/uploads/")) return;
+  const name = path.basename(url);
+  if (!name || name === "." || name === "..") return;
+  const dest = path.join(env.uploadDir, name);
+  try {
+    await fs.unlink(dest);
+  } catch {
+    // ignore missing files
+  }
+}
+
+/** Load a seed asset as a data URL (works on published hosts without disk). */
+export async function seedAssetDataUrl(filePath: string): Promise<string> {
+  const buffer = await fs.readFile(filePath);
+  const ext = safeImageExt(filePath);
+  const mime = MIME_BY_EXT[ext] ?? "image/png";
+  return toDataUrl(buffer, mime);
 }

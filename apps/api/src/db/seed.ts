@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import bcrypt from "bcryptjs";
 import { prisma } from "./prisma.js";
-import { env } from "../lib/env.js";
+import { seedAssetDataUrl } from "../lib/storage.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -28,11 +28,8 @@ async function ensureSeedUpload(): Promise<string> {
   if (!src) {
     throw new Error("Seed artwork asset not found (seed-harbor.png)");
   }
-
-  await fs.mkdir(env.uploadDir, { recursive: true });
-  const dest = path.join(env.uploadDir, "seed-harbor.png");
-  await fs.copyFile(src, dest);
-  return "/uploads/seed-harbor.png";
+  // Data URL so the sample image works on published hosts without local disk.
+  return seedAssetDataUrl(src);
 }
 
 /**
