@@ -1,6 +1,7 @@
 {
   "name": "artsie",
   "private": true,
+  "type": "module",
   "workspaces": [
     "apps/*"
   ],
@@ -13,6 +14,9 @@
     "db:migrate": "npm run db:migrate -w @artsie/api",
     "db:seed": "npm run db:seed -w @artsie/api",
     "preview": "npm run build && npm run start"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
   },
   "engines": {
     "node": ">=20"

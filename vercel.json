@@ -1,3 +1,4 @@
 {
-  "outputDirectory": "public"
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "express"
 }
