@@ -8,9 +8,11 @@
     "dev": "npm run dev --workspaces --if-present",
     "dev:api": "npm run dev -w @artsie/api",
     "dev:web": "npm run dev -w @artsie/web",
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build -w @artsie/web && npm run build -w @artsie/api && node scripts/migrate.mjs",
+    "start": "npm run start -w @artsie/api",
     "db:migrate": "npm run db:migrate -w @artsie/api",
-    "db:seed": "npm run db:seed -w @artsie/api"
+    "db:seed": "npm run db:seed -w @artsie/api",
+    "preview": "npm run build && npm run start"
   },
   "engines": {
     "node": ">=20"

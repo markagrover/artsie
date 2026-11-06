@@ -29,11 +29,11 @@ docker compose up -d db
 ```bash
 cp .env.example apps/api/.env   # adjust if needed
 npm install
-npm run db:push -w @artsie/api  # or: npm run db:migrate
-npm run db:seed -w @artsie/api
+npm run db:migrate              # prisma migrate deploy
+# empty DBs auto-seed on API start; or: npm run db:seed
 ```
 
-### 3. Run
+### 3. Run (split local)
 
 ```bash
 # terminal 1
@@ -45,10 +45,20 @@ npm run dev:web
 
 - Web: http://localhost:5173  
 - API: http://localhost:4000  
-- Seed login: `mira@artsie.studio` / `password123` (artist)  
-  Buyer: `buyer@artsie.studio` / `password123`
+- Empty databases auto-seed one sample published listing for browse; register your own account to sell.
 
 The Vite dev server proxies `/api` and `/uploads` to the API.
+
+### Unified host (Cursor Publish / production)
+
+```bash
+export DATABASE_URL=postgresql://artsie:artsie@localhost:5432/artsie
+export JWT_SECRET=change-me-in-production
+npm run build   # builds SPA + API, runs prisma migrate when DATABASE_URL is set
+npm start       # Express serves /api, /uploads, and the Vite SPA on one port
+```
+
+`cursor-app.json` declares Postgres so Cursor Publish sets `DATABASE_URL` for build and runtime. Empty databases are seeded on boot with a sample published listing (no known login credentials).
 
 ## Image storage
 
@@ -91,7 +101,9 @@ S3_PUBLIC_BASE_URL=https://artsie-artwork.s3.amazonaws.com
 ## Monorepo layout
 
 ```
-apps/web     React SPA
-apps/api     Express API + Prisma
-docker-compose.yml   Postgres for local/dev
+apps/web           React SPA (Vite)
+apps/api           Express API + Prisma (also serves SPA after build)
+scripts/migrate.mjs  Prisma migrate for publish builds
+cursor-app.json    Declares Postgres for Cursor Publish
+docker-compose.yml Postgres for local/dev
 ```
