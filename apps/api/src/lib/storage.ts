@@ -5,11 +5,12 @@ import { env } from "./env.js";
 
 /**
  * Storage abstraction.
- * - On Cursor Publish / Vercel (ephemeral disk): store as data URLs in Postgres.
- * - Local: files under UPLOAD_DIR, served at /uploads/* (falls back to data URL
- *   if the disk is not writable).
+ * Default: store images as data URLs in Postgres (ListingImage.url) so they
+ * survive Cursor Publish / serverless hosts with ephemeral disks.
+ * Opt into local files with STORAGE_DRIVER=local.
  */
 export async function ensureUploadDir(): Promise<void> {
+  if (env.storageDriver !== "local") return;
   await fs.mkdir(env.uploadDir, { recursive: true });
 }
 
@@ -37,15 +38,6 @@ function mimeForFile(file: Express.Multer.File): string {
   return MIME_BY_EXT[safeImageExt(file.originalname)] ?? "image/jpeg";
 }
 
-/** True on hosted publish runtimes where local disk is ephemeral/read-only. */
-function preferInlineStorage(): boolean {
-  if (env.storageDriver === "s3") return true;
-  if (process.env.STORAGE_DRIVER === "inline") return true;
-  if (process.env.VERCEL) return true;
-  if (process.env.CURSOR_APP_ID) return true;
-  return false;
-}
-
 /** Persist an already-buffered multer file; return a URL or data URL. */
 export async function storeImage(
   file: Express.Multer.File,
@@ -60,23 +52,16 @@ export async function storeImage(
 
   const mime = mimeForFile(file);
 
-  if (preferInlineStorage()) {
+  // Durable default: inline in DB (required on publish hosts).
+  if (env.storageDriver !== "local") {
     return { url: toDataUrl(buffer, mime) };
   }
 
-  try {
-    await ensureUploadDir();
-    const filename = `${randomUUID()}${safeImageExt(file.originalname)}`;
-    const dest = path.join(env.uploadDir, filename);
-    await fs.writeFile(dest, buffer);
-    return { url: `/uploads/${filename}` };
-  } catch (err) {
-    console.warn(
-      "[storage] disk write failed; storing image inline in the database",
-      err,
-    );
-    return { url: toDataUrl(buffer, mime) };
-  }
+  await ensureUploadDir();
+  const filename = `${randomUUID()}${safeImageExt(file.originalname)}`;
+  const dest = path.join(env.uploadDir, filename);
+  await fs.writeFile(dest, buffer);
+  return { url: `/uploads/${filename}` };
 }
 
 /** Best-effort delete of a local upload. Data URLs need no file cleanup. */

@@ -30,7 +30,12 @@ export const env = {
   jwtSecret: resolveJwtSecret(),
   /** Comma-separated origins, or "*" / empty for same-origin / reflect. */
   corsOrigin: process.env.CORS_ORIGIN ?? (isPublished ? "" : "http://localhost:5173"),
-  storageDriver: (process.env.STORAGE_DRIVER ?? "local") as "local" | "s3",
+  // Default inline (data URL in Postgres) so publish hosts keep images.
+  // Set STORAGE_DRIVER=local for classic disk files in local dev.
+  storageDriver: (process.env.STORAGE_DRIVER ?? "inline") as
+    | "local"
+    | "inline"
+    | "s3",
   uploadDir: path.resolve(
     process.env.UPLOAD_DIR ?? path.join(__dirname, "../../uploads"),
   ),

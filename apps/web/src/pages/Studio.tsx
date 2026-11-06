@@ -107,11 +107,15 @@ export function Studio() {
         ({ listing } = await api.updateListing(token, editingId, body));
       } else {
         ({ listing } = await api.createListing(token, body));
+        // So a retry after a failed image upload updates this listing
+        // instead of creating a duplicate.
+        setEditingId(listing.id);
       }
       if (files && files.length > 0) {
         try {
           ({ listing } = await api.uploadImages(token, listing.id, files));
         } catch (uploadErr) {
+          setFiles(null);
           await load();
           throw new Error(
             uploadErr instanceof Error
