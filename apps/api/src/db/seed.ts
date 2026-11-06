@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { ArtworkKind, ListingStatus } from "@prisma/client";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -9,7 +10,6 @@ import { env } from "../lib/env.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 async function ensureSeedUpload(): Promise<string> {
-  // Prefer committed seed asset (survives publish pack); fall back to cwd.
   const candidates = [
     path.join(__dirname, "../../prisma/seed-assets/seed-harbor.png"),
     path.join(process.cwd(), "apps/api/prisma/seed-assets/seed-harbor.png"),
@@ -36,32 +36,24 @@ async function ensureSeedUpload(): Promise<string> {
 }
 
 /**
- * Populate demo users + sample listing when the database is empty.
- * Safe to call on every boot — no-ops when any user already exists.
+ * When the database has no users, add one sample published listing so browse
+ * is not blank. The catalog seller uses a random password that is never
+ * logged or documented — visitors register their own accounts to sell.
  */
 export async function seedIfEmpty(): Promise<boolean> {
   const count = await prisma.user.count();
   if (count > 0) return false;
 
   const seedImageUrl = await ensureSeedUpload();
-  const passwordHash = await bcrypt.hash("password123", 10);
+  const passwordHash = await bcrypt.hash(randomBytes(32).toString("hex"), 10);
 
   const artist = await prisma.user.create({
     data: {
-      email: "mira@artsie.studio",
+      email: `catalog-${randomBytes(8).toString("hex")}@artsie.local`,
       passwordHash,
-      displayName: "Mira Chen",
-      bio: "Oil and mixed media. Based in Portland.",
+      displayName: "Studio Catalog",
+      bio: "Sample originals for browsing Artsie Phase 1.",
       isArtist: true,
-    },
-  });
-
-  await prisma.user.create({
-    data: {
-      email: "buyer@artsie.studio",
-      passwordHash,
-      displayName: "Alex Rivera",
-      isArtist: false,
     },
   });
 
@@ -85,23 +77,6 @@ export async function seedIfEmpty(): Promise<boolean> {
     },
   });
 
-  await prisma.listing.create({
-    data: {
-      sellerId: artist.id,
-      title: "Studio Still Life (draft)",
-      description: "Work in progress — not ready for the floor yet.",
-      medium: "Acrylic on panel",
-      dimensions: "16 × 20 in",
-      kind: ArtworkKind.ORIGINAL,
-      status: ListingStatus.DRAFT,
-      priceCents: 90000,
-      shippingPriceCents: 3500,
-      estimatedShipDays: 7,
-    },
-  });
-
-  console.log(
-    "Seeded empty database: mira@artsie.studio / buyer@artsie.studio (password123)",
-  );
+  console.log("Seeded empty database with a sample published listing");
   return true;
 }

@@ -45,8 +45,7 @@ npm run dev:web
 
 - Web: http://localhost:5173  
 - API: http://localhost:4000  
-- Seed login: `mira@artsie.studio` / `password123` (artist)  
-  Buyer: `buyer@artsie.studio` / `password123`
+- Empty databases auto-seed one sample published listing for browse; register your own account to sell.
 
 The Vite dev server proxies `/api` and `/uploads` to the API.
 
@@ -59,7 +58,7 @@ npm run build   # builds SPA + API, runs prisma migrate when DATABASE_URL is set
 npm start       # Express serves /api, /uploads, and the Vite SPA on one port
 ```
 
-`cursor-app.json` declares Postgres so Cursor Publish sets `DATABASE_URL` for build and runtime. Empty databases are seeded on boot with demo users and a sample listing.
+`cursor-app.json` declares Postgres so Cursor Publish sets `DATABASE_URL` for build and runtime. Empty databases are seeded on boot with a sample published listing (no known login credentials).
 
 ## Image storage
 

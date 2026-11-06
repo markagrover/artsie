@@ -4,9 +4,17 @@ import { z } from "zod";
 import { ArtworkKind, ListingStatus, Prisma } from "@prisma/client";
 import { prisma } from "../db/prisma.js";
 import { storeImage } from "../lib/storage.js";
+import { asyncHandler } from "../lib/asyncHandler.js";
 import { requireAuth, type AuthedRequest } from "../middleware/auth.js";
 
 export const listingsRouter = Router();
+
+/** Postgres INTEGER (signed 32-bit) upper bound for money columns. */
+const MAX_INT32 = 2_147_483_647;
+/** Practical listing price cap ($10M) — still within INTEGER. */
+const MAX_PRICE_CENTS = 1_000_000_000;
+/** Practical shipping cap ($100k). */
+const MAX_SHIPPING_CENTS = 10_000_000;
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -18,8 +26,14 @@ const listingBodySchema = z.object({
   description: z.string().max(5000).optional().default(""),
   medium: z.string().max(120).optional().nullable(),
   dimensions: z.string().max(120).optional().nullable(),
-  priceCents: z.number().int().positive(),
-  shippingPriceCents: z.number().int().min(0).optional().default(0),
+  priceCents: z.number().int().positive().max(Math.min(MAX_PRICE_CENTS, MAX_INT32)),
+  shippingPriceCents: z
+    .number()
+    .int()
+    .min(0)
+    .max(Math.min(MAX_SHIPPING_CENTS, MAX_INT32))
+    .optional()
+    .default(0),
   shippingNotes: z.string().max(500).optional().nullable(),
   estimatedShipDays: z.number().int().positive().max(90).optional().nullable(),
   status: z.nativeEnum(ListingStatus).optional(),
@@ -95,162 +109,179 @@ const include = {
 } as const;
 
 /** Public catalog: published originals. */
-listingsRouter.get("/", async (req, res) => {
-  const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
-  const where: Prisma.ListingWhereInput = {
-    status: ListingStatus.PUBLISHED,
-    ...(q
-      ? {
-          OR: [
-            { title: { contains: q, mode: "insensitive" } },
-            { description: { contains: q, mode: "insensitive" } },
-            { medium: { contains: q, mode: "insensitive" } },
-          ],
-        }
-      : {}),
-  };
-  const listings = await prisma.listing.findMany({
-    where,
-    include,
-    orderBy: { createdAt: "desc" },
-  });
-  res.json({ listings: listings.map(serializeListing) });
-});
+listingsRouter.get(
+  "/",
+  asyncHandler(async (req, res) => {
+    const q = typeof req.query.q === "string" ? req.query.q.trim() : "";
+    const where: Prisma.ListingWhereInput = {
+      status: ListingStatus.PUBLISHED,
+      ...(q
+        ? {
+            OR: [
+              { title: { contains: q, mode: "insensitive" } },
+              { description: { contains: q, mode: "insensitive" } },
+              { medium: { contains: q, mode: "insensitive" } },
+            ],
+          }
+        : {}),
+    };
+    const listings = await prisma.listing.findMany({
+      where,
+      include,
+      orderBy: { createdAt: "desc" },
+    });
+    res.json({ listings: listings.map(serializeListing) });
+  }),
+);
 
 /** Seller's own listings (all statuses). */
 listingsRouter.get(
   "/mine",
   requireAuth,
-  async (req: AuthedRequest, res) => {
+  asyncHandler(async (req: AuthedRequest, res) => {
     const listings = await prisma.listing.findMany({
       where: { sellerId: req.user!.id },
       include,
       orderBy: { updatedAt: "desc" },
     });
     res.json({ listings: listings.map(serializeListing) });
-  },
+  }),
 );
 
-listingsRouter.get("/:id", async (req, res) => {
-  const listing = await prisma.listing.findUnique({
-    where: { id: req.params.id },
-    include,
-  });
-  if (!listing) {
-    res.status(404).json({ error: "Listing not found" });
-    return;
-  }
-  // Drafts only visible to owner — check optional bearer
-  if (listing.status === ListingStatus.DRAFT) {
-    const header = req.headers.authorization;
-    let owner = false;
-    if (header?.startsWith("Bearer ")) {
-      try {
-        const { verifyToken } = await import("../lib/auth.js");
-        const payload = verifyToken(header.slice(7));
-        owner = payload.sub === listing.sellerId;
-      } catch {
-        owner = false;
-      }
-    }
-    if (!owner) {
+listingsRouter.get(
+  "/:id",
+  asyncHandler(async (req, res) => {
+    const listing = await prisma.listing.findUnique({
+      where: { id: req.params.id },
+      include,
+    });
+    if (!listing) {
       res.status(404).json({ error: "Listing not found" });
       return;
     }
-  }
-  res.json({ listing: serializeListing(listing) });
-});
+    if (listing.status === ListingStatus.DRAFT) {
+      const header = req.headers.authorization;
+      let owner = false;
+      if (header?.startsWith("Bearer ")) {
+        try {
+          const { verifyToken } = await import("../lib/auth.js");
+          const payload = verifyToken(header.slice(7));
+          owner = payload.sub === listing.sellerId;
+        } catch {
+          owner = false;
+        }
+      }
+      if (!owner) {
+        res.status(404).json({ error: "Listing not found" });
+        return;
+      }
+    }
+    res.json({ listing: serializeListing(listing) });
+  }),
+);
 
-listingsRouter.post("/", requireAuth, async (req: AuthedRequest, res) => {
-  const user = await prisma.user.findUniqueOrThrow({
-    where: { id: req.user!.id },
-  });
-  if (!user.isArtist) {
-    res.status(403).json({
-      error: "Enable artist mode on your profile before creating listings",
+listingsRouter.post(
+  "/",
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const user = await prisma.user.findUniqueOrThrow({
+      where: { id: req.user!.id },
     });
-    return;
-  }
-  const parsed = listingBodySchema.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten() });
-    return;
-  }
-  const data = parsed.data;
-  if (data.kind !== ArtworkKind.ORIGINAL) {
-    res.status(400).json({
-      error: "Phase 1 supports physical originals only",
+    if (!user.isArtist) {
+      res.status(403).json({
+        error: "Enable artist mode on your profile before creating listings",
+      });
+      return;
+    }
+    const parsed = listingBodySchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    const data = parsed.data;
+    if (data.kind !== ArtworkKind.ORIGINAL) {
+      res.status(400).json({
+        error: "Phase 1 supports physical originals only",
+      });
+      return;
+    }
+    const listing = await prisma.listing.create({
+      data: {
+        sellerId: user.id,
+        title: data.title,
+        description: data.description,
+        medium: data.medium,
+        dimensions: data.dimensions,
+        priceCents: data.priceCents,
+        shippingPriceCents: data.shippingPriceCents,
+        shippingNotes: data.shippingNotes,
+        estimatedShipDays: data.estimatedShipDays,
+        status: data.status ?? ListingStatus.DRAFT,
+        quantity: 1,
+        kind: ArtworkKind.ORIGINAL,
+      },
+      include,
     });
-    return;
-  }
-  const listing = await prisma.listing.create({
-    data: {
-      sellerId: user.id,
-      title: data.title,
-      description: data.description,
-      medium: data.medium,
-      dimensions: data.dimensions,
-      priceCents: data.priceCents,
-      shippingPriceCents: data.shippingPriceCents,
-      shippingNotes: data.shippingNotes,
-      estimatedShipDays: data.estimatedShipDays,
-      status: data.status ?? ListingStatus.DRAFT,
-      quantity: 1,
-      kind: ArtworkKind.ORIGINAL,
-    },
-    include,
-  });
-  res.status(201).json({ listing: serializeListing(listing) });
-});
+    res.status(201).json({ listing: serializeListing(listing) });
+  }),
+);
 
-listingsRouter.patch("/:id", requireAuth, async (req: AuthedRequest, res) => {
-  const existing = await prisma.listing.findUnique({
-    where: { id: req.params.id },
-  });
-  if (!existing || existing.sellerId !== req.user!.id) {
-    res.status(404).json({ error: "Listing not found" });
-    return;
-  }
-  const parsed = listingBodySchema.partial().safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.flatten() });
-    return;
-  }
-  if (parsed.data.kind && parsed.data.kind !== ArtworkKind.ORIGINAL) {
-    res.status(400).json({
-      error: "Phase 1 supports physical originals only",
+listingsRouter.patch(
+  "/:id",
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const existing = await prisma.listing.findUnique({
+      where: { id: req.params.id },
     });
-    return;
-  }
-  const listing = await prisma.listing.update({
-    where: { id: existing.id },
-    data: {
-      ...parsed.data,
-      kind: ArtworkKind.ORIGINAL,
-      quantity: 1,
-    },
-    include,
-  });
-  res.json({ listing: serializeListing(listing) });
-});
+    if (!existing || existing.sellerId !== req.user!.id) {
+      res.status(404).json({ error: "Listing not found" });
+      return;
+    }
+    const parsed = listingBodySchema.partial().safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: parsed.error.flatten() });
+      return;
+    }
+    if (parsed.data.kind && parsed.data.kind !== ArtworkKind.ORIGINAL) {
+      res.status(400).json({
+        error: "Phase 1 supports physical originals only",
+      });
+      return;
+    }
+    const listing = await prisma.listing.update({
+      where: { id: existing.id },
+      data: {
+        ...parsed.data,
+        kind: ArtworkKind.ORIGINAL,
+        quantity: 1,
+      },
+      include,
+    });
+    res.json({ listing: serializeListing(listing) });
+  }),
+);
 
-listingsRouter.delete("/:id", requireAuth, async (req: AuthedRequest, res) => {
-  const existing = await prisma.listing.findUnique({
-    where: { id: req.params.id },
-  });
-  if (!existing || existing.sellerId !== req.user!.id) {
-    res.status(404).json({ error: "Listing not found" });
-    return;
-  }
-  await prisma.listing.delete({ where: { id: existing.id } });
-  res.status(204).send();
-});
+listingsRouter.delete(
+  "/:id",
+  requireAuth,
+  asyncHandler(async (req: AuthedRequest, res) => {
+    const existing = await prisma.listing.findUnique({
+      where: { id: req.params.id },
+    });
+    if (!existing || existing.sellerId !== req.user!.id) {
+      res.status(404).json({ error: "Listing not found" });
+      return;
+    }
+    await prisma.listing.delete({ where: { id: existing.id } });
+    res.status(204).send();
+  }),
+);
 
 listingsRouter.post(
   "/:id/images",
   requireAuth,
   upload.array("images", 6),
-  async (req: AuthedRequest, res) => {
+  asyncHandler(async (req: AuthedRequest, res) => {
     const existing = await prisma.listing.findUnique({
       where: { id: req.params.id },
       include: { images: true },
@@ -289,5 +320,5 @@ listingsRouter.post(
       images: created,
       listing: serializeListing(listing),
     });
-  },
+  }),
 );
