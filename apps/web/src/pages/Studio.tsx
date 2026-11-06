@@ -262,11 +262,11 @@ export function Studio() {
             </select>
           </div>
           <div className="field">
-            <label htmlFor="images">Artwork images</label>
+            <label htmlFor="images">Artwork images (up to 4, 2MB each)</label>
             <input
               id="images"
               type="file"
-              accept="image/*"
+              accept="image/jpeg,image/png,image/webp,image/gif"
               multiple
               onChange={(e) => setFiles(e.target.files)}
             />

@@ -20,14 +20,14 @@ Marketplace for **physical original artwork**. Artists list; sellers ship. Phase
 # Docker (recommended)
 docker compose up -d db
 
-# Or any Postgres 16+ with:
-# DATABASE_URL=postgresql://artsie:artsie@localhost:5432/artsie
+# Or any Postgres 16+ — set DATABASE_URL in apps/api/.env
+# (see .env.example; use your own credentials, never commit them)
 ```
 
 ### 2. Install & migrate
 
 ```bash
-cp .env.example apps/api/.env   # adjust if needed
+cp .env.example apps/api/.env   # set DATABASE_URL and a random JWT_SECRET
 npm install
 npm run db:migrate              # prisma migrate deploy
 # empty DBs auto-seed on API start; or: npm run db:seed
@@ -52,8 +52,9 @@ The Vite dev server proxies `/api` and `/uploads` to the API.
 ### Unified host (Cursor Publish / production)
 
 ```bash
-export DATABASE_URL=postgresql://artsie:artsie@localhost:5432/artsie
-export JWT_SECRET=change-me-in-production
+# DATABASE_URL is provided by Cursor Publish when cursor-app.json declares postgres.
+# Set JWT_SECRET in the host environment (or Cursor app secrets) to a long random value.
+# Do not commit real secrets. If JWT_SECRET is unset, the process uses an ephemeral secret.
 npm run build   # builds SPA + API, runs prisma migrate when DATABASE_URL is set
 npm start       # Express serves /api, /uploads, and the Vite SPA on one port
 ```

@@ -11,13 +11,11 @@ const isPublished = databaseUrl !== "";
 function resolveJwtSecret(): string {
   const fromEnv = process.env.JWT_SECRET?.trim();
   if (fromEnv) return fromEnv;
-  // Local/dev only — never ship a fixed production secret in source.
-  if (!isPublished) return "dev-secret-change-me";
-  // Published host without JWT_SECRET yet: ephemeral per process.
-  // Bind JWT_SECRET via Cursor app secrets for stable sessions across restarts.
+  // Never ship a fixed signing secret. Unset → ephemeral per process
+  // (local or published). Set JWT_SECRET in the environment for stable sessions.
   const generated = randomBytes(32).toString("hex");
   console.warn(
-    "[env] JWT_SECRET unset on published host; using ephemeral secret for this process",
+    "[env] JWT_SECRET unset; using ephemeral secret for this process",
   );
   return generated;
 }
