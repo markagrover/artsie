@@ -1,0 +1,110 @@
+.detail {
+  padding: 2rem 0 4rem;
+  animation: rise 0.65s var(--ease) both;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: 2.5rem;
+  align-items: start;
+}
+
+.detail-main-image {
+  aspect-ratio: 4 / 5;
+  overflow: hidden;
+  background: #d5dbe3;
+}
+
+.detail-main-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.detail-placeholder {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: var(--ink-soft);
+}
+
+.detail-thumbs {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.detail-thumbs button {
+  width: 64px;
+  height: 64px;
+  padding: 0;
+  border: 2px solid transparent;
+  background: #d5dbe3;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.detail-thumbs button.active {
+  border-color: var(--accent);
+}
+
+.detail-thumbs img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.detail-seller {
+  font-size: 0.95rem;
+  margin-bottom: 0.35rem;
+}
+
+.detail-copy h1 {
+  font-size: clamp(1.9rem, 3.5vw, 2.6rem);
+  margin-bottom: 0.5rem;
+}
+
+.detail-price {
+  font-size: 1.6rem;
+  margin-bottom: 1.25rem;
+}
+
+.detail-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.45rem 1rem;
+  margin: 0 0 1.25rem;
+  font-size: 0.95rem;
+}
+
+.detail-facts dt {
+  color: var(--ink-soft);
+  font-weight: 600;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding-top: 0.15rem;
+}
+
+.detail-facts dd {
+  margin: 0;
+}
+
+.detail-desc {
+  white-space: pre-wrap;
+  margin-bottom: 1.25rem;
+  max-width: 42ch;
+}
+
+.detail-note {
+  margin-bottom: 1.25rem;
+  font-size: 0.92rem;
+}
+
+@media (max-width: 860px) {
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
