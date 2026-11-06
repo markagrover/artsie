@@ -109,7 +109,16 @@ export function Studio() {
         ({ listing } = await api.createListing(token, body));
       }
       if (files && files.length > 0) {
-        ({ listing } = await api.uploadImages(token, listing.id, files));
+        try {
+          ({ listing } = await api.uploadImages(token, listing.id, files));
+        } catch (uploadErr) {
+          await load();
+          throw new Error(
+            uploadErr instanceof Error
+              ? `Listing saved, but image upload failed: ${uploadErr.message}`
+              : "Listing saved, but image upload failed",
+          );
+        }
       }
       setForm(emptyForm);
       setEditingId(null);

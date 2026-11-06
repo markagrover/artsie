@@ -87,7 +87,7 @@ async function request<T>(
 }
 
 export function imageUrl(url: string): string {
-  if (url.startsWith("http")) return url;
+  if (url.startsWith("http") || url.startsWith("data:")) return url;
   return `${API_BASE}${url}`;
 }
 
