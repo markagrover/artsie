@@ -31,11 +31,12 @@ export const env = {
   uploadDir: path.resolve(
     process.env.UPLOAD_DIR ?? path.join(__dirname, "../../uploads"),
   ),
-  /** Built Vite SPA — served by Express in production / publish. */
+  /** Built Vite SPA — repo-root `public/` (Cursor Publish outputDirectory). */
   webDistDir: path.resolve(
     process.env.WEB_DIST_DIR ??
-      path.join(__dirname, "../../../web/dist"),
+      path.join(__dirname, "../../../../public"),
   ),
+
   s3: {
     endpoint: process.env.S3_ENDPOINT,
     region: process.env.S3_REGION ?? "us-east-1",
