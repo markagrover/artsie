@@ -1,23 +1,26 @@
-import { PrismaClient, ArtworkKind, ListingStatus } from "@prisma/client";
-import bcrypt from "bcryptjs";
-import fs from "node:fs/promises";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
-
-const prisma = new PrismaClient();
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-
-async function ensureSeedUpload(): Promise<string> {
-  const src = path.join(__dirname, "seed-assets/seed-harbor.png");
-  const uploadDir = path.resolve(process.env.UPLOAD_DIR ?? path.join(__dirname, "../uploads"));
-  await fs.mkdir(uploadDir, { recursive: true });
-  const dest = path.join(uploadDir, "seed-harbor.png");
-  await fs.copyFile(src, dest);
-  return "/uploads/seed-harbor.png";
-}
+import { seedIfEmpty } from "../src/db/seed.js";
+import { prisma } from "../src/db/prisma.js";
 
 async function main() {
-  const seedImageUrl = await ensureSeedUpload();
+  // CLI seed always upserts demo accounts even when DB is not empty.
+  // For empty DBs, seedIfEmpty covers the happy path; when users exist we
+  // still ensure the demo artist listing is present for local demos.
+  const { ArtworkKind, ListingStatus } = await import("@prisma/client");
+  const bcrypt = await import("bcryptjs");
+  const fs = await import("node:fs/promises");
+  const path = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const { env } = await import("../src/lib/env.js");
+
+  const seeded = await seedIfEmpty();
+  if (seeded) return;
+
+  const __dirname = path.dirname(fileURLToPath(import.meta.url));
+  const src = path.join(__dirname, "seed-assets/seed-harbor.png");
+  await fs.mkdir(env.uploadDir, { recursive: true });
+  const dest = path.join(env.uploadDir, "seed-harbor.png");
+  await fs.copyFile(src, dest);
+  const seedImageUrl = "/uploads/seed-harbor.png";
   const passwordHash = await bcrypt.hash("password123", 10);
 
   const artist = await prisma.user.upsert({
@@ -59,31 +62,19 @@ async function main() {
         status: ListingStatus.PUBLISHED,
         priceCents: 240000,
         shippingPriceCents: 6500,
-        shippingNotes: "Ships rolled in a tube with certificate of authenticity.",
+        shippingNotes:
+          "Ships rolled in a tube with certificate of authenticity.",
         estimatedShipDays: 5,
         images: {
           create: [{ url: seedImageUrl, sortOrder: 0 }],
         },
       },
     });
-
-    await prisma.listing.create({
-      data: {
-        sellerId: artist.id,
-        title: "Studio Still Life (draft)",
-        description: "Work in progress — not ready for the floor yet.",
-        medium: "Acrylic on panel",
-        dimensions: "16 × 20 in",
-        kind: ArtworkKind.ORIGINAL,
-        status: ListingStatus.DRAFT,
-        priceCents: 90000,
-        shippingPriceCents: 3500,
-        estimatedShipDays: 7,
-      },
-    });
   }
 
-  console.log("Seeded users: mira@artsie.studio / buyer@artsie.studio (password123)");
+  console.log(
+    "Seeded users: mira@artsie.studio / buyer@artsie.studio (password123)",
+  );
 }
 
 main()

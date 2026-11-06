@@ -1,17 +1,42 @@
 import "dotenv/config";
+import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+const databaseUrl = process.env.DATABASE_URL?.trim() ?? "";
+const isPublished = databaseUrl !== "";
+
+function resolveJwtSecret(): string {
+  const fromEnv = process.env.JWT_SECRET?.trim();
+  if (fromEnv) return fromEnv;
+  // Local/dev only — never ship a fixed production secret in source.
+  if (!isPublished) return "dev-secret-change-me";
+  // Published host without JWT_SECRET yet: ephemeral per process.
+  // Bind JWT_SECRET via Cursor app secrets for stable sessions across restarts.
+  const generated = randomBytes(32).toString("hex");
+  console.warn(
+    "[env] JWT_SECRET unset on published host; using ephemeral secret for this process",
+  );
+  return generated;
+}
+
 export const env = {
   port: Number(process.env.PORT ?? 4000),
-  databaseUrl: process.env.DATABASE_URL ?? "",
-  jwtSecret: process.env.JWT_SECRET ?? "dev-secret-change-me",
-  corsOrigin: process.env.CORS_ORIGIN ?? "http://localhost:5173",
+  databaseUrl,
+  isPublished,
+  jwtSecret: resolveJwtSecret(),
+  /** Comma-separated origins, or "*" / empty for same-origin / reflect. */
+  corsOrigin: process.env.CORS_ORIGIN ?? (isPublished ? "" : "http://localhost:5173"),
   storageDriver: (process.env.STORAGE_DRIVER ?? "local") as "local" | "s3",
   uploadDir: path.resolve(
     process.env.UPLOAD_DIR ?? path.join(__dirname, "../../uploads"),
+  ),
+  /** Built Vite SPA — served by Express in production / publish. */
+  webDistDir: path.resolve(
+    process.env.WEB_DIST_DIR ??
+      path.join(__dirname, "../../../web/dist"),
   ),
   s3: {
     endpoint: process.env.S3_ENDPOINT,
