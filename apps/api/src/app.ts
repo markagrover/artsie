@@ -7,6 +7,7 @@ import { ensureUploadDir } from "./lib/storage.js";
 import { seedIfEmpty } from "./db/seed.js";
 import { authRouter } from "./routes/auth.js";
 import { listingsRouter } from "./routes/listings.js";
+import { mediaRouter } from "./routes/media.js";
 import { uploadsRouter } from "./routes/uploads.js";
 
 let boot: Promise<void> | undefined;
@@ -56,6 +57,7 @@ export function createApp(): express.Express {
 
   app.use("/api/auth", authRouter);
   app.use("/api/listings", listingsRouter);
+  app.use("/api/media", mediaRouter);
   app.use("/api", (_req, res) => {
     res.status(404).json({ error: "Not found" });
   });

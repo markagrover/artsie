@@ -22,7 +22,8 @@ const MAX_SHIPPING_CENTS = 10_000_000;
 const MAX_LISTINGS_PER_USER = 25;
 const MAX_IMAGES_PER_LISTING = 4;
 const MAX_IMAGES_PER_USER = 40;
-const MAX_UPLOAD_BYTES = 2 * 1024 * 1024;
+/** Keep uploads small so serverless write + response stay under host limits. */
+const MAX_UPLOAD_BYTES = 800 * 1024;
 
 /** Memory storage so nothing hits disk until ownership + quota checks pass. */
 const upload = multer({
@@ -105,6 +106,12 @@ type ListingWithRelations = {
   };
 };
 
+/** Never put data: URLs in JSON — they hang the publish host on upload/list. */
+function publicImageUrl(img: { id: string; url: string }): string {
+  if (img.url.startsWith("data:")) return `/api/media/${img.id}`;
+  return img.url;
+}
+
 function serializeListing(listing: ListingWithRelations) {
   return {
     id: listing.id,
@@ -126,7 +133,7 @@ function serializeListing(listing: ListingWithRelations) {
       .sort((a, b) => a.sortOrder - b.sortOrder)
       .map((img) => ({
         id: img.id,
-        url: img.url,
+        url: publicImageUrl(img),
         sortOrder: img.sortOrder,
       })),
     seller: {
@@ -418,8 +425,13 @@ listingsRouter.post(
       where: { id: gate.listingId },
       include,
     });
+    // Never return raw data: URLs in JSON — only short /api/media/:id links.
     res.status(201).json({
-      images: created,
+      images: created.map((img) => ({
+        id: img.id,
+        url: publicImageUrl(img),
+        sortOrder: img.sortOrder,
+      })),
       listing: serializeListing(listing),
     });
   }),

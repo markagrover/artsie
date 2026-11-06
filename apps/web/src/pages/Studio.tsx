@@ -280,7 +280,7 @@ export function Studio() {
             </select>
           </div>
           <div className="field">
-            <label htmlFor="images">Artwork images (up to 4, 2MB each)</label>
+            <label htmlFor="images">Artwork images (up to 4, under 800KB each)</label>
             <input
               id="images"
               type="file"

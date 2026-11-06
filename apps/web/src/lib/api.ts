@@ -56,7 +56,28 @@ async function request<T>(
   if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  const timeoutMs = path.includes("/images") ? 45_000 : 20_000;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error(
+        path.includes("/images")
+          ? "Image upload timed out — try a smaller JPEG/PNG (under 800KB)"
+          : "Request timed out — try again",
+      );
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
   if (!res.ok) {
     // HTTP/2 often has an empty statusText — never rely on it alone.
     let message = "";
