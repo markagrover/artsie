@@ -1,0 +1,62 @@
+.studio {
+  padding: 2.5rem 0 4rem;
+}
+
+.studio-header {
+  margin-bottom: 1.75rem;
+  animation: rise 0.55s var(--ease) both;
+}
+
+.studio-header h1 {
+  font-size: clamp(2rem, 4vw, 2.8rem);
+  margin-bottom: 0.35rem;
+}
+
+.studio-form {
+  display: grid;
+  gap: 1rem;
+  padding: 1.5rem;
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  margin-bottom: 2.5rem;
+  animation: rise 0.65s var(--ease) 0.05s both;
+}
+
+.studio-form h2,
+.studio-list h2 {
+  font-size: 1.45rem;
+}
+
+.studio-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.studio-list {
+  animation: fade 0.7s var(--ease) 0.1s both;
+}
+
+.studio-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 1.5rem;
+  margin-top: 1.25rem;
+}
+
+.studio-item-actions {
+  display: grid;
+  gap: 0.5rem;
+  margin-top: 0.65rem;
+}
+
+.studio-item-actions > div {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.studio-item-actions .btn {
+  padding: 0.45rem 0.85rem;
+  font-size: 0.85rem;
+}

@@ -1,0 +1,75 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Single account type — artists and buyers share capability.
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  displayName  String
+  bio          String?
+  /// Dual capability: anyone can buy; listing requires isArtist.
+  isArtist     Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  listings     Listing[]
+}
+
+/// Catalog product kind — Phase 1 uses ORIGINAL only; prints/downloads later.
+enum ArtworkKind {
+  ORIGINAL
+  PRINT
+  DOWNLOAD
+}
+
+enum ListingStatus {
+  DRAFT
+  PUBLISHED
+}
+
+model Listing {
+  id          String        @id @default(cuid())
+  sellerId    String
+  seller      User          @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  title       String
+  description String        @default("")
+  medium      String?
+  /// Freeform e.g. "24 × 36 in" — leave structured dims for later.
+  dimensions  String?
+  /// Extensible catalog type; Phase 1 UI creates ORIGINAL only.
+  kind        ArtworkKind   @default(ORIGINAL)
+  status      ListingStatus @default(DRAFT)
+  /// Price in USD cents.
+  priceCents  Int
+  currency    String        @default("USD")
+  /// Unique originals are quantity 1; prints can raise this later.
+  quantity    Int           @default(1)
+  /// Per-listing flat shipping (seller ships). Phase 2 checkout uses these.
+  shippingPriceCents Int    @default(0)
+  shippingNotes      String?
+  estimatedShipDays  Int?
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  images      ListingImage[]
+
+  @@index([status, createdAt])
+  @@index([sellerId])
+}
+
+model ListingImage {
+  id        String   @id @default(cuid())
+  listingId String
+  listing   Listing  @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  /// Relative path or public URL depending on storage driver.
+  url       String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([listingId])
+}
