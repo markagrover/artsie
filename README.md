@@ -17,8 +17,10 @@ Marketplace for **physical original artwork**. Artists list; sellers ship. Phase
 ### 1. Postgres
 
 ```bash
-# Docker (recommended)
+# Docker (recommended) — password required; DB listens on localhost only
+export POSTGRES_PASSWORD="$(openssl rand -hex 16)"
 docker compose up -d db
+# DATABASE_URL=postgresql://artsie:${POSTGRES_PASSWORD}@127.0.0.1:5432/artsie
 
 # Or any Postgres 16+ — set DATABASE_URL in apps/api/.env
 # (see .env.example; use your own credentials, never commit them)

@@ -1,12 +1,15 @@
+# Local Postgres only — not used by Cursor Publish.
+# Requires POSTGRES_PASSWORD in the environment (no default shipped).
+# Port is bound to loopback so the DB is not exposed on other interfaces.
 services:
   db:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: artsie
-      POSTGRES_PASSWORD: artsie
-      POSTGRES_DB: artsie
+      POSTGRES_USER: ${POSTGRES_USER:-artsie}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the environment}
+      POSTGRES_DB: ${POSTGRES_DB:-artsie}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - artsie_pg:/var/lib/postgresql/data
 

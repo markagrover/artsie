@@ -3,9 +3,21 @@ import { z } from "zod";
 import { prisma } from "../db/prisma.js";
 import { hashPassword, signToken, verifyPassword } from "../lib/auth.js";
 import { asyncHandler } from "../lib/asyncHandler.js";
+import { rateLimit } from "../lib/rateLimit.js";
 import { requireAuth, type AuthedRequest } from "../middleware/auth.js";
 
 export const authRouter = Router();
+
+const registerLimit = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  name: "registration",
+});
+const loginLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  name: "login",
+});
 
 const registerSchema = z.object({
   email: z.string().email(),
@@ -39,6 +51,7 @@ function publicUser(user: {
 
 authRouter.post(
   "/register",
+  registerLimit,
   asyncHandler(async (req, res) => {
     const parsed = registerSchema.safeParse(req.body);
     if (!parsed.success) {
@@ -62,6 +75,7 @@ authRouter.post(
 
 authRouter.post(
   "/login",
+  loginLimit,
   asyncHandler(async (req, res) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {

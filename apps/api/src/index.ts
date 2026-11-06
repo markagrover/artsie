@@ -7,6 +7,7 @@ import { ensureUploadDir } from "./lib/storage.js";
 import { seedIfEmpty } from "./db/seed.js";
 import { authRouter } from "./routes/auth.js";
 import { listingsRouter } from "./routes/listings.js";
+import { uploadsRouter } from "./routes/uploads.js";
 
 await ensureUploadDir();
 
@@ -18,18 +19,18 @@ try {
 
 const app = express();
 
-const corsOrigin = env.corsOrigin;
-app.use(
-  cors({
-    origin:
-      corsOrigin === "" || corsOrigin === "*"
-        ? true
-        : corsOrigin.split(",").map((s) => s.trim()),
-    credentials: true,
-  }),
-);
+const corsOrigin = env.corsOrigin.trim();
+if (corsOrigin !== "") {
+  // Explicit allowlist only — never reflect arbitrary origins with credentials.
+  app.use(
+    cors({
+      origin: corsOrigin.split(",").map((s) => s.trim()).filter(Boolean),
+      credentials: true,
+    }),
+  );
+}
 app.use(express.json({ limit: "2mb" }));
-app.use("/uploads", express.static(env.uploadDir));
+app.use("/uploads", uploadsRouter);
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true, service: "artsie-api", phase: 1 });
