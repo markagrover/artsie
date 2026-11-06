@@ -91,9 +91,14 @@ export function Studio() {
         priceCents: dollarsToCents(form.price),
         shippingPriceCents: Math.round(Number(form.shippingPrice || 0) * 100),
         shippingNotes: form.shippingNotes || null,
-        estimatedShipDays: form.estimatedShipDays
-          ? Number(form.estimatedShipDays)
-          : null,
+        estimatedShipDays: (() => {
+          if (!form.estimatedShipDays.trim()) return null;
+          const days = Number(form.estimatedShipDays);
+          if (!Number.isInteger(days) || days <= 0) {
+            throw new Error("Ship days must be a whole number");
+          }
+          return days;
+        })(),
         status: form.status,
         kind: "ORIGINAL",
       };

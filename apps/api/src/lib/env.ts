@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -11,13 +11,16 @@ const isPublished = databaseUrl !== "";
 function resolveJwtSecret(): string {
   const fromEnv = process.env.JWT_SECRET?.trim();
   if (fromEnv) return fromEnv;
-  // Never ship a fixed signing secret. Unset → ephemeral per process
-  // (local or published). Set JWT_SECRET in the environment for stable sessions.
-  const generated = randomBytes(32).toString("hex");
-  console.warn(
-    "[env] JWT_SECRET unset; using ephemeral secret for this process",
-  );
-  return generated;
+  // Published / multi-instance: derive a stable secret from DATABASE_URL so
+  // every serverless isolate verifies the same tokens. Prefer JWT_SECRET when set.
+  // Never log the derived value.
+  if (databaseUrl !== "") {
+    return createHash("sha256")
+      .update(`artsie-jwt-v1:${databaseUrl}`)
+      .digest("hex");
+  }
+  // Local without DB URL: ephemeral is fine (single process).
+  return randomBytes(32).toString("hex");
 }
 
 export const env = {

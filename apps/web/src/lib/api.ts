@@ -58,17 +58,29 @@ async function request<T>(
   }
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
   if (!res.ok) {
-    let message = res.statusText;
+    // HTTP/2 often has an empty statusText — never rely on it alone.
+    let message = "";
     try {
-      const data = await res.json();
-      message =
-        typeof data.error === "string"
-          ? data.error
-          : JSON.stringify(data.error ?? data);
+      const data = (await res.json()) as {
+        error?: string | { formErrors?: string[]; fieldErrors?: Record<string, string[]> };
+      };
+      if (typeof data.error === "string") {
+        message = data.error;
+      } else if (data.error && typeof data.error === "object") {
+        const fields = data.error.fieldErrors
+          ? Object.entries(data.error.fieldErrors)
+              .flatMap(([k, v]) => (v ?? []).map((msg) => `${k}: ${msg}`))
+              .join("; ")
+          : "";
+        const form = (data.error.formErrors ?? []).join("; ");
+        message = [form, fields].filter(Boolean).join("; ") || "Invalid request";
+      } else {
+        message = `Request failed (${res.status})`;
+      }
     } catch {
-      // ignore
+      message = `Request failed (${res.status})`;
     }
-    throw new Error(message || "Request failed");
+    throw new Error(message);
   }
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;

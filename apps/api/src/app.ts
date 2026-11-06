@@ -31,6 +31,8 @@ async function ensureBooted(): Promise<void> {
 /** Express app used by local `npm start` and by Cursor Publish / Vercel. */
 export function createApp(): express.Express {
   const app = express();
+  // Host sits behind a reverse proxy; needed for accurate req.ip rate limits.
+  app.set("trust proxy", 1);
 
   app.use((req, res, next) => {
     void ensureBooted().then(() => next()).catch(next);
