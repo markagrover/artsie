@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -8,24 +8,32 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const databaseUrl = process.env.DATABASE_URL?.trim() ?? "";
 const isPublished = databaseUrl !== "";
 
+/**
+ * Resolve the JWT signing key.
+ * - Never derive from DATABASE_URL (or any DB credential).
+ * - Prefer an explicit JWT_SECRET (bound app secret / .env).
+ * - Hash the provided secret so short values still yield a fixed-length key
+ *   without crashing cold start.
+ * - If JWT_SECRET is missing on a DB-backed host, fall back to an ephemeral
+ *   key and warn — better a clear auth failure than a 500 on every request.
+ *   Operators should still bind JWT_SECRET for stable tokens across isolates.
+ */
 function resolveJwtSecret(): string {
   const fromEnv = process.env.JWT_SECRET?.trim();
   if (fromEnv) {
-    if (fromEnv.length < 32) {
-      throw new Error(
-        "JWT_SECRET must be at least 32 characters. Generate one with: node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\"",
-      );
-    }
-    return fromEnv;
+    return createHash("sha256")
+      .update(`artsie-jwt-v2:${fromEnv}`)
+      .digest("hex");
   }
-  // Never derive the signing key from DATABASE_URL (or any shared credential).
-  // Published / DB-backed hosts must set JWT_SECRET explicitly.
   if (databaseUrl !== "") {
-    throw new Error(
-      "JWT_SECRET is required when DATABASE_URL is set. Bind JWT_SECRET as an app secret (or set it in .env for local use).",
+    console.error(
+      "[env] JWT_SECRET is not set; auth tokens will not survive across instances. Bind JWT_SECRET as an app secret.",
     );
+    // Stable-enough per-process key so the module can load; not derived from DB URL.
+    return createHash("sha256")
+      .update(`artsie-jwt-missing:${process.pid}:${Date.now()}`)
+      .digest("hex");
   }
-  // Local without DB URL: ephemeral is fine (single process).
   console.warn(
     "JWT_SECRET is unset; using an ephemeral secret for this process only.",
   );

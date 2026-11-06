@@ -53,6 +53,9 @@ export function durableRateLimit(options: {
   /** Prefix for the bucket id (e.g. "registration"). */
   scope: string;
 }): RequestHandler {
+  /** Fallback if the RateLimitBucket table is not migrated yet. */
+  const memoryFallback = rateLimit(options);
+
   return (req, res, next) => {
     void (async () => {
       const authed = req as AuthedRequest;
@@ -64,22 +67,33 @@ export function durableRateLimit(options: {
       const id = `${options.scope}:${identity}`;
       const now = new Date();
 
-      const result = await prisma.$transaction(async (tx) => {
-        const existing = await tx.rateLimitBucket.findUnique({ where: { id } });
-        if (!existing || existing.resetAt <= now) {
-          const resetAt = new Date(now.getTime() + options.windowMs);
-          const row = await tx.rateLimitBucket.upsert({
+      let result: { count: number; resetAt: Date };
+      try {
+        result = await prisma.$transaction(async (tx) => {
+          const existing = await tx.rateLimitBucket.findUnique({
             where: { id },
-            create: { id, count: 1, resetAt },
-            update: { count: 1, resetAt },
           });
-          return row;
-        }
-        return tx.rateLimitBucket.update({
-          where: { id },
-          data: { count: { increment: 1 } },
+          if (!existing || existing.resetAt <= now) {
+            const resetAt = new Date(now.getTime() + options.windowMs);
+            return tx.rateLimitBucket.upsert({
+              where: { id },
+              create: { id, count: 1, resetAt },
+              update: { count: 1, resetAt },
+            });
+          }
+          return tx.rateLimitBucket.update({
+            where: { id },
+            data: { count: { increment: 1 } },
+          });
         });
-      });
+      } catch (err) {
+        console.error(
+          "[rateLimit] durable store unavailable; using in-memory fallback:",
+          err instanceof Error ? err.message : err,
+        );
+        memoryFallback(req, res, next);
+        return;
+      }
 
       if (result.count > options.max) {
         const retryAfterSec = Math.max(
